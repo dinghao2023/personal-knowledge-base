@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # 存储
     chroma_dir: str = "./chroma_db"
     docs_dir: str = "./docs"
-    collection_name: str = "kb"
+    collection_name: str = "knyx"
 
     # 分块与检索
     chunk_size: int = 500
