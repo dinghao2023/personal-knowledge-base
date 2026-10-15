@@ -79,7 +79,9 @@ def ingest_file(file_path: str, filename: str) -> int:
     if not texts:
         return 0
 
+    # 向量化，将文本转换为向量。默认模型 BAAI/bge-m3 的稠密向量长度为1024
     embeddings = embedder.embed_documents(texts)
+    # 写入向量库
     collection.upsert(ids=ids, embeddings=embeddings, documents=texts, metadatas=metas)
     return len(texts)
 
