@@ -1,9 +1,12 @@
 """FastAPI 入口：/api 前缀路由，对接前端。"""
 import os
+from pathlib import Path
 from typing import List, Literal
 
 from fastapi import APIRouter, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import chat as chat_service
@@ -11,7 +14,27 @@ from .config import settings
 from .db import count
 from .ingest import SUPPORTED_EXTS, ingest_file, save_upload
 
-app = FastAPI(title="Knyx RAG API", version="0.1.0", description="个人知识库 RAG Agent 后端")
+# docs_url=None：默认文档页从 cdn.jsdelivr.net 加载脚本，国内经常打不开
+app = FastAPI(
+    title="Knyx RAG API",
+    version="0.1.0",
+    description="个人知识库 RAG Agent 后端",
+    docs_url=None,
+)
+
+_static_dir = Path(__file__).resolve().parent.parent / "static"
+app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
+
+@app.get("/docs", include_in_schema=False)
+async def swagger_ui():
+    """使用本机静态文件渲染 Swagger UI，不依赖外网 CDN。"""
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - Swagger UI",
+        swagger_js_url="/static/swagger-ui-bundle.js",
+        swagger_css_url="/static/swagger-ui.css",
+    )
 
 # 开发期允许跨域（前端 5173）；生产环境请收敛为具体来源
 app.add_middleware(
