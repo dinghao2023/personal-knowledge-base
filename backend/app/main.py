@@ -72,9 +72,6 @@ async def upload(file: UploadFile = File(...)):
             status_code=400,
             detail=f"不支持的格式: .{ext or '未知'}，支持 {sorted(SUPPORTED_EXTS)}",
         )
-    if not file.content_length or file.content_length == 0:
-        # 部分客户端不传 content_length，改为读取后判断
-        pass
     saved = save_upload(file, os.path.basename(name))
     try:
         chunks = ingest_file(saved, os.path.basename(name))
