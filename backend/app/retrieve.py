@@ -32,7 +32,7 @@ def search(query: str, top_k: int | None = None) -> List[Hit]:
 
     hits: List[Hit] = []
     for chunk, meta, dist in zip(docs, metas, dists):
-        sim = 1 - dist  # 余弦距离 → 相似度
+        sim = 1 - dist  # 余弦相似度，即 1 - 余弦距离
         if sim < settings.similarity_threshold:
             continue
         hits.append(
