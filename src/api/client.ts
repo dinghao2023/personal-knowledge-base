@@ -22,6 +22,19 @@ const client = axios.create({
   timeout: 120000, // 问答耗时较长，放宽超时
 })
 
+export interface SavedFile {
+  filename: string
+  size: number
+  chunks: number
+  uploaded_at: string
+}
+
+/** 获取已上传的文件（对接 FastAPI /api/documents） */
+export async function listDocuments(): Promise<{ files: SavedFile[] }> {
+  const { data } = await client.get('/documents')
+  return data
+}
+
 /** 上传文档入库，返回已分块数量（对接 FastAPI /api/upload） */
 export async function uploadDocument(file: File): Promise<{ chunks: number }> {
   const form = new FormData()

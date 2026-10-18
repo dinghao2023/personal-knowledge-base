@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { uploadDocument } from '@/api/client'
+import { onMounted, ref } from 'vue'
+import { listDocuments, uploadDocument } from '@/api/client'
 
 interface DocItem {
   name: string
@@ -11,7 +11,23 @@ interface DocItem {
 
 const docs = ref<DocItem[]>([])
 const uploading = ref(false)
+const loading = ref(true)
 const error = ref('')
+
+function toDocItem(file: { filename: string; size: number; chunks: number; uploaded_at: string }): DocItem {
+  const uploaded = new Date(file.uploaded_at)
+  return {
+    name: file.filename,
+    size: formatSize(file.size),
+    chunks: file.chunks,
+    uploadedAt: Number.isNaN(uploaded.getTime()) ? file.uploaded_at : uploaded.toLocaleString(),
+  }
+}
+
+async function loadDocuments() {
+  const res = await listDocuments()
+  docs.value = res.files.map(toDocItem)
+}
 
 function formatSize(bytes: number): string {
   if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB'
@@ -27,13 +43,8 @@ async function onFileChange(e: Event) {
   uploading.value = true
   error.value = ''
   try {
-    const res = await uploadDocument(file)
-    docs.value.unshift({
-      name: file.name,
-      size: formatSize(file.size),
-      chunks: res.chunks,
-      uploadedAt: new Date().toLocaleString(),
-    })
+    await uploadDocument(file)
+    await loadDocuments()
   } catch (err) {
     error.value = '上传失败：' + (err instanceof Error ? err.message : String(err))
   } finally {
@@ -41,6 +52,16 @@ async function onFileChange(e: Event) {
     target.value = ''
   }
 }
+
+onMounted(async () => {
+  try {
+    await loadDocuments()
+  } catch (err) {
+    error.value = '读取文档列表失败：' + (err instanceof Error ? err.message : String(err))
+  } finally {
+    loading.value = false
+  }
+})
 </script>
 
 <template>
@@ -61,7 +82,8 @@ async function onFileChange(e: Event) {
     <p v-if="error" class="error">{{ error }}</p>
     <p class="hint">支持 PDF / DOCX / Markdown / TXT，上传后自动解析、分块并入库。</p>
 
-    <div v-if="docs.length === 0" class="empty">
+    <div v-if="loading" class="empty">正在读取已有文档…</div>
+    <div v-else-if="docs.length === 0" class="empty">
       还没有文档。上传第一份资料开始构建你的知识库。
     </div>
 

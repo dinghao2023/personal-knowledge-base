@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from . import chat as chat_service
 from .config import settings
 from .db import count
-from .ingest import SUPPORTED_EXTS, ingest_file, save_upload
+from .ingest import SUPPORTED_EXTS, ingest_file, list_saved_files, save_upload
 
 # docs_url=None：默认文档页从 cdn.jsdelivr.net 加载脚本，国内经常打不开
 app = FastAPI(
@@ -61,6 +61,12 @@ class ChatRequest(BaseModel):
 @api.get("/health")
 def health():
     return {"status": "ok", "chunks": count()}
+
+
+@api.get("/documents")
+def documents():
+    """返回已落盘的文件列表。"""
+    return {"files": list_saved_files()}
 
 
 @api.post("/upload")

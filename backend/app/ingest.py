@@ -1,5 +1,6 @@
 """入库链路：文档解析 → 分块 → 向量化 → 写入向量库。"""
 import os
+from datetime import datetime
 from typing import List, Optional, Tuple
 
 from .config import settings
@@ -84,6 +85,45 @@ def ingest_file(file_path: str, filename: str) -> int:
     # 写入向量库
     collection.upsert(ids=ids, embeddings=embeddings, documents=texts, metadatas=metas)
     return len(texts)
+
+
+def _chunk_counts() -> dict:
+    """按文件名统计向量库中的分块数量。"""
+    counts: dict = {}
+    try:
+        data = get_collection().get(include=["metadatas"])
+    except Exception:
+        return counts
+    for meta in data.get("metadatas") or []:
+        source = (meta or {}).get("source")
+        if source:
+            counts[source] = counts.get(source, 0) + 1
+    return counts
+
+
+def list_saved_files() -> List[dict]:
+    """列出 docs 目录中已保存的文件，并附上分块数与修改时间。"""
+    os.makedirs(settings.docs_dir, exist_ok=True)
+    counts = _chunk_counts()
+    files: List[dict] = []
+    for name in os.listdir(settings.docs_dir):
+        if name.startswith("."):
+            continue
+        path = os.path.join(settings.docs_dir, name)
+        if not os.path.isfile(path):
+            continue
+        stat = os.stat(path)
+        uploaded_at = datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat(timespec="seconds")
+        files.append(
+            {
+                "filename": name,
+                "size": stat.st_size,
+                "chunks": counts.get(name, 0),
+                "uploaded_at": uploaded_at,
+            }
+        )
+    files.sort(key=lambda item: item["uploaded_at"], reverse=True)
+    return files
 
 
 def save_upload(upload_file, filename: str) -> str:
