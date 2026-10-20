@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
+import DOMPurify from 'dompurify'
+import { marked } from 'marked'
 import { sendChat, type Citation, type HistoryItem } from '@/api/client'
 
 interface Message {
@@ -13,6 +15,11 @@ const messages = ref<Message[]>([])
 const input = ref('')
 const sending = ref(false)
 const listEl = ref<HTMLElement | null>(null)
+
+function renderMarkdown(source: string): string {
+  const html = marked.parse(source, { async: false, gfm: true, breaks: true })
+  return DOMPurify.sanitize(html)
+}
 
 function scrollToBottom() {
   nextTick(() => {
@@ -74,7 +81,12 @@ async function submit() {
         <div class="bubble">
           <div v-if="m.loading" class="typing">思考中…</div>
           <template v-else>
-            <div class="content">{{ m.content }}</div>
+            <div
+              v-if="m.role === 'assistant'"
+              class="content markdown"
+              v-html="renderMarkdown(m.content)"
+            ></div>
+            <div v-else class="content">{{ m.content }}</div>
             <div v-if="m.citations && m.citations.length" class="citations">
               <div class="cit-title">引用来源</div>
               <div
@@ -197,6 +209,53 @@ async function submit() {
 .content {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.markdown {
+  white-space: normal;
+}
+
+.markdown :deep(p) {
+  margin: 0 0 0.65em;
+}
+
+.markdown :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.markdown :deep(ul),
+.markdown :deep(ol) {
+  margin: 0.3em 0 0.7em;
+  padding-left: 1.4em;
+}
+
+.markdown :deep(li) {
+  margin: 0.15em 0;
+}
+
+.markdown :deep(strong) {
+  font-weight: 650;
+}
+
+.markdown :deep(code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  background: var(--bg);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+
+.markdown :deep(pre) {
+  overflow-x: auto;
+  background: var(--bg);
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin: 0.4em 0 0.7em;
+}
+
+.markdown :deep(pre code) {
+  background: none;
+  padding: 0;
 }
 
 .typing {
