@@ -1,6 +1,7 @@
 # Knyx — 个人知识库 RAG Agent（前端）
 
 Vue 3 + Vite + TypeScript 前端，配套 FastAPI 后端。
+后端代码位于backend文件夹内。
 
 ## 技术栈
 
