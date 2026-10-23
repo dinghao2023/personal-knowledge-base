@@ -52,7 +52,7 @@ app/
 
 ## Chroma 里存什么
 
-Chroma 是本地向量库，数据目录为 `backend/chroma_db`（配置项 `CHROMA_DIR`）。本项目只使用其中的一个集合，名字是 `knyx`（配置项 `COLLECTION_NAME`）。集合相当于这个库里的一张表。打开方式在 `app/db.py`：`PersistentClient` 指向数据目录，再按集合名 `get_or_create_collection`。
+Chroma 是本地向量库，数据目录为 `backend/chroma_db`（配置项 `CHROMA_DIR`）。本项目只使用其中的一个集合，名字是 `knyx`（配置项 `COLLECTION_NAME`）。打开方式在 `app/db.py`：`PersistentClient` 指向数据目录，再按集合名 `get_or_create_collection`。
 
 上传一份文件会留下两份数据：
 
@@ -62,6 +62,21 @@ Chroma 是本地向量库，数据目录为 `backend/chroma_db`（配置项 `CHR
 | 集合 `knyx` | 切块后的文本、向量和来源。`ingest_file` 写入 |
 
 原始文件不进 Chroma。问答检索只用集合里的分块。
+
+### 存放位置
+
+`knyx` 是集合，不是一张表。集合名单和分块内容都在 `backend/chroma_db/chroma.sqlite3`，由 Chroma 拆进自己的内部表。用 DB Browser for SQLite 或 DBeaver 打开这个文件时，看不到名为 `knyx` 的表。
+
+| 位置 | 存什么 |
+| --- | --- |
+| 目录 `backend/docs/` | 上传的原始文件 |
+| 集合 `knyx` | 程序通过 `upsert` / `get` 看到的全部分块。当前只有这一个集合 |
+| 表 `collections` | 集合名单。现在只有一行，`name` 为 `knyx`，并带一个内部 id。分块记录不在这张表里 |
+| 表 `embeddings` | 每条分块的内部编号，对应 `文件名_序号` 这种 id |
+| 表 `embedding_metadata` | 正文和来源。`chroma:document` 是原文，`source` 是文件名，`page` 是页码 |
+| `backend/chroma_db` 里的索引文件 | 1024 维向量。`segments` 表记录这些索引分段，向量本身不是 `embedding_metadata` 的普通文本列 |
+
+服务运行期间只用客户端查看 `chroma.sqlite3`，不要在里面改行或删行。
 
 ### 写入过程
 
@@ -101,4 +116,4 @@ python -c "from app.db import get_collection; c=get_collection(); print(c.name, 
 
 第一行是集合名和分块总数。后面每条是记录 `id`、元数据，以及正文的前 60 个字符。这条命令不打印向量。
 
-也可以用 DB Browser for SQLite 或 DBeaver 以只读方式打开 `backend/chroma_db/chroma.sqlite3`。正文和来源在表 `embedding_metadata` 中：`chroma:document` 是原文，`source` 是文件名，`page` 是页码。向量在同目录的索引文件里，不在这张表的普通列中。服务运行期间只查看、不要改这张表。
+用 SQLite 客户端查看时，到表 `collections` 确认集合名，到表 `embedding_metadata` 看正文和来源。按一条完整记录查看时，仍用上面的 `collection.get()`。
