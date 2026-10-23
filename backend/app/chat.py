@@ -27,7 +27,7 @@ SYSTEM_PROMPT = (
     "资料中没有的信息，请明确说明无法从知识库中得知，不要编造。"
 )
 
-
+# 根据检索结果，调用模型
 def ask(question: str, history: List[Dict[str, str]]) -> Dict:
     hits = search(question)
     if not hits:
