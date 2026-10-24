@@ -126,6 +126,24 @@ def list_saved_files() -> List[dict]:
     return files
 
 
+def delete_saved_file(filename: str) -> None:
+    """删除 docs 目录中的文件，并清除向量库里该文件的全部分块。"""
+    name = os.path.basename(filename)
+    if not name or name != filename or name.startswith("."):
+        raise ValueError("非法文件名")
+
+    os.makedirs(settings.docs_dir, exist_ok=True)
+    docs_root = os.path.realpath(settings.docs_dir)
+    path = os.path.realpath(os.path.join(docs_root, name))
+    if os.path.commonpath([docs_root, path]) != docs_root:
+        raise ValueError("非法文件名")
+    if not os.path.isfile(path):
+        raise FileNotFoundError(name)
+
+    get_collection().delete(where={"source": name})
+    os.remove(path)
+
+
 def save_upload(upload_file, filename: str) -> str:
     """保存上传文件到 docs 目录，返回落盘路径。"""
     os.makedirs(settings.docs_dir, exist_ok=True)

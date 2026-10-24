@@ -35,6 +35,11 @@ export async function listDocuments(): Promise<{ files: SavedFile[] }> {
   return data
 }
 
+/** 删除已上传文档及其向量分块（对接 FastAPI DELETE /api/documents/{filename}） */
+export async function deleteDocument(filename: string): Promise<void> {
+  await client.delete(`/documents/${encodeURIComponent(filename)}`)
+}
+
 /** 上传文档入库，返回已分块数量（对接 FastAPI /api/upload） */
 export async function uploadDocument(file: File): Promise<{ chunks: number }> {
   const form = new FormData()

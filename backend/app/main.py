@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from . import chat as chat_service
 from .config import settings
 from .db import count
-from .ingest import SUPPORTED_EXTS, ingest_file, list_saved_files, save_upload
+from .ingest import SUPPORTED_EXTS, delete_saved_file, ingest_file, list_saved_files, save_upload
 
 # docs_url=None：默认文档页从 cdn.jsdelivr.net 加载脚本，国内经常打不开
 app = FastAPI(
@@ -67,6 +67,18 @@ def health():
 def documents():
     """返回已落盘的文件列表。"""
     return {"files": list_saved_files()}
+
+
+@api.delete("/documents/{filename}")
+def delete_document(filename: str):
+    """删除已上传文件及其向量分块。"""
+    try:
+        delete_saved_file(filename)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"filename": filename, "deleted": True}
 
 
 @api.post("/upload")

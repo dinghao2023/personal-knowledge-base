@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { listDocuments, uploadDocument } from '@/api/client'
+import { deleteDocument, listDocuments, uploadDocument } from '@/api/client'
 
 interface DocItem {
   name: string
@@ -12,6 +12,7 @@ interface DocItem {
 const docs = ref<DocItem[]>([])
 const uploading = ref(false)
 const loading = ref(true)
+const deleting = ref('')
 const error = ref('')
 
 function toDocItem(file: { filename: string; size: number; chunks: number; uploaded_at: string }): DocItem {
@@ -33,6 +34,22 @@ function formatSize(bytes: number): string {
   if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB'
   if (bytes >= 1024) return (bytes / 1024).toFixed(0) + ' KB'
   return bytes + ' B'
+}
+
+async function onDelete(name: string) {
+  if (deleting.value) return
+  if (!window.confirm(`确定删除「${name}」？文件和已入库的分块都会被移除。`)) return
+
+  deleting.value = name
+  error.value = ''
+  try {
+    await deleteDocument(name)
+    await loadDocuments()
+  } catch (err) {
+    error.value = '删除失败：' + (err instanceof Error ? err.message : String(err))
+  } finally {
+    deleting.value = ''
+  }
 }
 
 async function onFileChange(e: Event) {
@@ -88,7 +105,7 @@ onMounted(async () => {
     </div>
 
     <ul v-else class="doc-list">
-      <li v-for="(d, i) in docs" :key="i" class="doc-item">
+      <li v-for="d in docs" :key="d.name" class="doc-item">
         <div class="doc-icon">📄</div>
         <div class="doc-info">
           <div class="doc-name">{{ d.name }}</div>
@@ -98,6 +115,14 @@ onMounted(async () => {
             · {{ d.uploadedAt }}
           </div>
         </div>
+        <button
+          type="button"
+          class="delete-btn"
+          :disabled="deleting !== ''"
+          @click="onDelete(d.name)"
+        >
+          {{ deleting === d.name ? '删除中…' : '删除' }}
+        </button>
       </li>
     </ul>
   </div>
@@ -179,8 +204,29 @@ onMounted(async () => {
   box-shadow: var(--shadow);
 }
 
+.doc-info {
+  flex: 1;
+  min-width: 0;
+}
+
 .doc-icon {
   font-size: 22px;
+}
+
+.delete-btn {
+  flex-shrink: 0;
+  border: 1px solid var(--danger);
+  background: transparent;
+  color: var(--danger);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.delete-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .doc-name {
