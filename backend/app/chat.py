@@ -1,25 +1,12 @@
-"""问答：多轮历史 + 拼装 Prompt + LLM 生成 + 引用溯源。"""
+"""问答：检索结果经 LangChain 提示词链交给 LLM，并带回引用。"""
 from typing import Dict, List
+
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from .config import settings
 from .retrieve import search
 
-_llm_client = None
-
-
-def _get_llm():
-    global _llm_client
-    if _llm_client is None:
-        if not settings.llm_api_key:
-            raise RuntimeError("未配置 LLM_API_KEY，请在 backend/.env 中填写。")
-        from openai import OpenAI
-
-        _llm_client = OpenAI(
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key,
-        )
-    return _llm_client
-
+_chain = None
 
 SYSTEM_PROMPT = (
     "你是一个个人知识库助手。请仅根据提供的资料回答问题，给出简洁、准确的答案。"
@@ -27,7 +14,48 @@ SYSTEM_PROMPT = (
     "资料中没有的信息，请明确说明无法从知识库中得知，不要编造。"
 )
 
-# 根据检索结果，调用模型
+_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        ("system", SYSTEM_PROMPT),
+        MessagesPlaceholder("history"),
+        ("human", "资料：\n{context}\n\n问题：{question}"),
+    ]
+)
+
+
+def _get_chain():
+    global _chain
+    if _chain is not None:
+        return _chain
+    if not settings.llm_api_key:
+        raise RuntimeError("未配置 LLM_API_KEY，请在 backend/.env 中填写。")
+    from langchain_openai import ChatOpenAI
+
+    llm = ChatOpenAI(
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        temperature=0.2,
+    )
+    _chain = _PROMPT | llm
+    return _chain
+
+
+def _message_text(message) -> str:
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: List[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                parts.append(str(block.get("text") or ""))
+        return "".join(parts)
+    return str(content or "")
+
+
 def ask(question: str, history: List[Dict[str, str]]) -> Dict:
     hits = search(question)
     if not hits:
@@ -37,21 +65,14 @@ def ask(question: str, history: List[Dict[str, str]]) -> Dict:
         }
 
     context = "\n\n".join(f"[{i + 1}] {h.chunk}" for i, h in enumerate(hits))
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-
     # 只保留最近若干轮历史，避免上下文超限
-    for msg in history[-settings.history_turns * 2:]:
-        messages.append(msg)
-    messages.append(
-        {"role": "user", "content": f"资料：\n{context}\n\n问题：{question}"}
+    history_msgs = [
+        {"role": msg["role"], "content": msg["content"]}
+        for msg in history[-settings.history_turns * 2 :]
+    ]
+    message = _get_chain().invoke(
+        {"history": history_msgs, "context": context, "question": question}
     )
-
-    resp = _get_llm().chat.completions.create(
-        model=settings.llm_model,
-        messages=messages,
-        temperature=0.2,
-    )
-    answer = resp.choices[0].message.content or ""
 
     citations = [
         {
@@ -61,4 +82,4 @@ def ask(question: str, history: List[Dict[str, str]]) -> Dict:
         }
         for h in hits
     ]
-    return {"answer": answer, "citations": citations}
+    return {"answer": _message_text(message), "citations": citations}

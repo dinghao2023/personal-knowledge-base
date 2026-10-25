@@ -1,6 +1,6 @@
 # Knyx 后端 — FastAPI RAG Agent
 
-个人知识库 RAG 后端：文档解析 → 分块 → 向量化 → 检索 → LLM 生成 → 引用溯源。
+个人知识库 RAG 后端：文档解析 → 分块 → 向量化 → 检索 → LLM 生成 → 引用溯源。分块、向量化、检索和生成使用 LangChain，向量存在本地 Chroma。
 
 ## 快速开始
 
@@ -43,23 +43,23 @@ uvicorn app.main:app --reload --port 8000
 app/
 ├── main.py        # FastAPI 入口 + 路由
 ├── config.py      # .env 配置
-├── db.py          # Chroma 向量库封装
-├── embeddings.py  # 向量化抽象（api / local）
-├── ingest.py      # 入库：解析、分块、写库
+├── db.py          # Chroma 客户端与 LangChain VectorStore
+├── embeddings.py  # LangChain Embeddings（api / local）
+├── ingest.py      # 入库：Loader、TextSplitter、写库
 ├── retrieve.py    # 检索（Top-K + 相似度阈值）
-└── chat.py        # 问答：多轮、拼装、LLM、溯源
+└── chat.py        # 问答：提示词链、LLM、溯源
 ```
 
 ## Chroma 里存什么
 
-Chroma 是本地向量库，数据目录为 `backend/chroma_db`（配置项 `CHROMA_DIR`）。本项目只使用其中的一个集合，名字是 `knyx`（配置项 `COLLECTION_NAME`）。打开方式在 `app/db.py`：`PersistentClient` 指向数据目录，再按集合名 `get_or_create_collection`。
+Chroma 是本地向量库，数据目录为 `backend/chroma_db`（配置项 `CHROMA_DIR`）。本项目只使用其中的一个集合，名字是 `knyx`（配置项 `COLLECTION_NAME`）。`app/db.py` 用 `PersistentClient` 打开这个目录；入库和检索通过 LangChain 的 `Chroma` 向量库调用同一个客户端。
 
 上传一份文件会留下两份数据：
 
 | 位置 | 内容 |
 | --- | --- |
 | `backend/docs/` | 原始文件本身。`app/ingest.py` 的 `save_upload` 按文件名覆盖写入 |
-| 集合 `knyx` | 切块后的文本、向量和来源。`ingest_file` 写入 |
+| 集合 `knyx` | 切块后的文本、向量和来源。`ingest_file` 经 LangChain `add_documents` 写入 |
 
 原始文件不进 Chroma。问答检索只用集合里的分块。
 
@@ -84,16 +84,16 @@ Chroma 是本地向量库，数据目录为 `backend/chroma_db`（配置项 `CHR
 
 `ingest_file` 的顺序是：
 
-1. `extract_pages` 抽出文字。PDF 按页保留从 1 开始的页码；DOCX、Markdown、TXT 整篇作为一页，页码记为 `0`。
-2. `chunk_text` 按约 500 字切块，相邻块重叠约 80 字，断点优先落在换行或句号。
-3. `embed_documents` 把每块发给向量模型。默认是硅基流动上的 `BAAI/bge-m3`，每块得到 1024 维向量。
-4. `collection.upsert` 写入集合 `knyx`。
+1. `KnowledgeFileLoader` 载成 LangChain `Document`。PDF 按页保留从 1 开始的页码；DOCX、Markdown、TXT 整篇作为一条，页码记为 `0`。
+2. `RecursiveCharacterTextSplitter` 按约 500 字切块，相邻块重叠约 80 字，断点优先落在换行或句号。
+3. LangChain 的 `OpenAIEmbeddings` 把每块发给向量模型。默认是硅基流动上的 `BAAI/bge-m3`，每块得到 1024 维向量。
+4. `Chroma.add_documents` 写入集合 `knyx`，记录 id 仍是 `文件名_序号`。
 
 抽不出文字时，原文件仍留在 `docs/`，接口返回 `chunks: 0`，集合不增加记录。
 
 ### 每条记录的四个字段
 
-`upsert` 一次写入四份等长列表，相同下标组成一条记录：
+`add_documents` 一次写入四份等长列表，相同下标组成一条记录：
 
 | 字段 | 含义 | 例子 |
 | --- | --- | --- |

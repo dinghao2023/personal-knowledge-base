@@ -1,90 +1,78 @@
-"""入库链路：文档解析 → 分块 → 向量化 → 写入向量库。"""
+"""入库链路：LangChain 加载文档 → 分块 → 向量化 → 写入向量库。"""
 import os
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Iterator, List
+
+from langchain_core.document_loaders import BaseLoader
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from .config import settings
-from .db import get_collection
-from .embeddings import get_embedding
+from .db import get_collection, get_vectorstore
 
 SUPPORTED_EXTS = {"pdf", "docx", "md", "txt"}
 
-
-def extract_pages(path: str) -> List[Tuple[str, Optional[int]]]:
-    """返回 [(页面文本, 页码或 None)]。PDF 保留页码用于溯源，其余格式页码为 None。"""
-    ext = path.rsplit(".", 1)[-1].lower()
-    if ext == "pdf":
-        import fitz
-
-        doc = fitz.open(path)
-        return [(page.get_text(), i + 1) for i, page in enumerate(doc)]
-    if ext == "docx":
-        import docx
-
-        paras = [p.text for p in docx.Document(path).paragraphs if p.text]
-        return [("\n".join(paras), None)]
-    if ext == "md":
-        with open(path, encoding="utf-8") as f:
-            return [(f.read(), None)]
-    if ext == "txt":
-        with open(path, encoding="utf-8") as f:
-            return [(f.read(), None)]
-    raise ValueError(f"不支持的文件类型: .{ext}")
+# 断点顺序与原先手写分块一致：先段落，再换行，再中英文句末
+_SEPARATORS = ["\n\n", "\n", "。", "！", "？", ".", "!", "；", " ", ""]
 
 
-def _find_split(text: str, start: int, hard_end: int) -> int:
-    """在 [start, hard_end] 内找最优断点，优先换行/句号。"""
-    if hard_end >= len(text):
-        return len(text)
-    seg = text[start:hard_end]
-    for ch in ["\n\n", "\n", "。", "！", "？", ".", "!", "；"]:
-        idx = seg.rfind(ch)
-        if idx > len(seg) * 0.5:
-            return start + idx + len(ch)
-    return hard_end
+class KnowledgeFileLoader(BaseLoader):
+    """把一份已落盘文件载成 LangChain Document。PDF 按页保留从 1 开始的页码。"""
+
+    def __init__(self, path: str, filename: str):
+        self.path = path
+        self.filename = filename
+
+    def lazy_load(self) -> Iterator[Document]:
+        ext = self.path.rsplit(".", 1)[-1].lower()
+        meta = {"source": self.filename, "page": 0}
+        if ext == "pdf":
+            import fitz
+
+            doc = fitz.open(self.path)
+            try:
+                for i, page in enumerate(doc):
+                    text = page.get_text()
+                    if text.strip():
+                        yield Document(
+                            page_content=text,
+                            metadata={"source": self.filename, "page": i + 1},
+                        )
+            finally:
+                doc.close()
+            return
+        if ext == "docx":
+            import docx
+
+            paras = [p.text for p in docx.Document(self.path).paragraphs if p.text]
+            text = "\n".join(paras)
+        elif ext in {"md", "txt"}:
+            with open(self.path, encoding="utf-8") as f:
+                text = f.read()
+        else:
+            raise ValueError(f"不支持的文件类型: .{ext}")
+        if text.strip():
+            yield Document(page_content=text, metadata=meta)
 
 
-def chunk_text(text: str, size: int, overlap: int) -> List[str]:
-    """递归分块，带 overlap 保留上下文。"""
-    chunks: List[str] = []
-    start = 0
-    n = len(text)
-    while start < n:
-        end = _find_split(text, start, min(start + size, n))
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-        if end >= n:
-            break
-        start = max(end - overlap, start + 1)
-    return chunks
+def _splitter() -> RecursiveCharacterTextSplitter:
+    return RecursiveCharacterTextSplitter(
+        chunk_size=settings.chunk_size,
+        chunk_overlap=settings.chunk_overlap,
+        separators=_SEPARATORS,
+    )
 
 
 def ingest_file(file_path: str, filename: str) -> int:
-    """解析文档并写入向量库，返回分块数量。"""
-    pages = extract_pages(file_path)
-    embedder = get_embedding()
-    collection = get_collection()
-
-    texts: List[str] = []
-    metas: List[dict] = []
-    ids: List[str] = []
-    idx = 0
-    for page_text, page_no in pages:
-        for chunk in chunk_text(page_text, settings.chunk_size, settings.chunk_overlap):
-            texts.append(chunk)
-            metas.append({"source": filename, "page": page_no or 0})
-            ids.append(f"{filename}_{idx}")
-            idx += 1
-
-    if not texts:
+    """解析文档并写入向量库，返回分块数量。同一文件再次上传会按序号覆盖。"""
+    docs = _splitter().split_documents(list(KnowledgeFileLoader(file_path, filename).lazy_load()))
+    docs = [doc for doc in docs if doc.page_content.strip()]
+    if not docs:
         return 0
 
-    # 向量化，将文本转换为向量。默认模型 BAAI/bge-m3 的稠密向量长度为1024
-    embeddings = embedder.embed_documents(texts)
-    # 写入向量库
-    collection.upsert(ids=ids, embeddings=embeddings, documents=texts, metadatas=metas)
-    return len(texts)
+    ids = [f"{filename}_{i}" for i in range(len(docs))]
+    get_vectorstore().add_documents(docs, ids=ids)
+    return len(docs)
 
 
 def _chunk_counts() -> dict:
