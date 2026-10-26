@@ -63,15 +63,29 @@ def _splitter() -> RecursiveCharacterTextSplitter:
     )
 
 
+def _delete_stale_chunks(filename: str, keep_ids: set[str]) -> None:
+    """删掉同一来源里这次没有写入的分块。新文件更短时，多出来的旧序号会留在这里。"""
+    data = get_collection().get(where={"source": filename}, include=["metadatas"])
+    stale = [item_id for item_id in data.get("ids") or [] if item_id not in keep_ids]
+    if stale:
+        get_collection().delete(ids=stale)
+
+
 def ingest_file(file_path: str, filename: str) -> int:
-    """解析文档并写入向量库，返回分块数量。同一文件再次上传会按序号覆盖。"""
+    """解析文档并写入向量库，返回分块数量。
+
+    同一文件再次上传时，相同序号会被覆盖。写入成功后再删掉本次没有覆盖到的旧分块。
+    抽不出文字时清掉该文件的全部分块，避免继续检索到上一版内容。
+    """
     docs = _splitter().split_documents(list(KnowledgeFileLoader(file_path, filename).lazy_load()))
     docs = [doc for doc in docs if doc.page_content.strip()]
     if not docs:
+        _delete_stale_chunks(filename, set())
         return 0
 
     ids = [f"{filename}_{i}" for i in range(len(docs))]
     get_vectorstore().add_documents(docs, ids=ids)
+    _delete_stale_chunks(filename, set(ids))
     return len(docs)
 
 
