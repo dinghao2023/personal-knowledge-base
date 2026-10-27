@@ -1,20 +1,22 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
-import { sendChat, type Citation, type HistoryItem } from '@/api/client'
+import { sendChat, type HistoryItem } from '@/api/client'
+import { useChatStore, type Message } from '@/stores/chat'
 
-interface Message {
-  role: 'user' | 'assistant'
-  content: string
-  citations?: Citation[]
-  loading?: boolean
-}
-
-const messages = ref<Message[]>([])
-const input = ref('')
-const sending = ref(false)
+const chat = useChatStore()
 const listEl = ref<HTMLElement | null>(null)
+
+const active = computed(() => chat.active)
+const sending = computed(() => chat.pendingIds.includes(active.value.id))
+
+const input = computed({
+  get: () => active.value.draft,
+  set: (value: string) => {
+    active.value.draft = value
+  },
+})
 
 function renderMarkdown(source: string): string {
   const html = marked.parse(source, { async: false, gfm: true, breaks: true })
@@ -27,18 +29,29 @@ function scrollToBottom() {
   })
 }
 
-async function submit() {
-  const text = input.value.trim()
-  if (!text || sending.value) return
+function startNewConversation() {
+  chat.startNewConversation()
+  scrollToBottom()
+}
 
-  input.value = ''
-  messages.value.push({ role: 'user', content: text })
+watch(() => chat.activeId, () => scrollToBottom())
+
+async function submit() {
+  const conv = active.value
+  const text = conv.draft.trim()
+  if (!text || chat.pendingIds.includes(conv.id)) return
+
+  conv.draft = ''
+  conv.messages.push({ role: 'user', content: text })
+  if (conv.messages.filter((m) => m.role === 'user').length === 1) {
+    conv.title = text.length > 16 ? text.slice(0, 16) + '…' : text
+  }
   const loadingMsg: Message = { role: 'assistant', content: '', loading: true }
-  messages.value.push(loadingMsg)
-  sending.value = true
+  conv.messages.push(loadingMsg)
+  chat.pendingIds = [...chat.pendingIds, conv.id]
   scrollToBottom()
 
-  const history: HistoryItem[] = messages.value
+  const history: HistoryItem[] = conv.messages
     .filter((m) => !m.loading && m.content)
     .slice(0, -1)
     .map((m) => ({ role: m.role, content: m.content }))
@@ -52,8 +65,8 @@ async function submit() {
     loadingMsg.loading = false
     loadingMsg.content = '请求失败：' + (e instanceof Error ? e.message : String(e))
   } finally {
-    sending.value = false
-    scrollToBottom()
+    chat.pendingIds = chat.pendingIds.filter((id) => id !== conv.id)
+    if (chat.activeId === conv.id) scrollToBottom()
   }
 }
 </script>
@@ -61,18 +74,25 @@ async function submit() {
 <template>
   <div class="chat">
     <header class="chat-head">
-      <h1>与知识库对话</h1>
-      <span class="tip">回答基于已入库文档，支持引用溯源</span>
+      <div>
+        <h1>与知识库对话</h1>
+        <span class="tip">回答基于已入库文档，支持引用溯源</span>
+      </div>
+      <button class="new-icon" type="button" title="新建" aria-label="新建" @click="startNewConversation">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      </button>
     </header>
 
     <div ref="listEl" class="msg-list">
-      <div v-if="messages.length === 0" class="empty">
+      <div v-if="active.messages.length === 0" class="empty">
         <p>上传文档后，在这里提问。</p>
         <p class="empty-sub">例如：这个项目的架构是怎样的？</p>
       </div>
 
       <div
-        v-for="(m, i) in messages"
+        v-for="(m, i) in active.messages"
         :key="i"
         class="msg-row"
         :class="m.role"
@@ -123,15 +143,43 @@ async function submit() {
   display: flex;
   flex-direction: column;
   height: 100%;
-  max-width: 860px;
-  margin: 0 auto;
+  min-width: 0;
   padding: 20px 24px;
   width: 100%;
 }
 
 .chat-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--border);
+}
+
+.new-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.new-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.new-icon:hover {
+  background: var(--bg);
+  color: var(--accent);
 }
 
 .chat-head h1 {

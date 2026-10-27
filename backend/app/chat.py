@@ -37,7 +37,7 @@ def _get_chain():
         base_url=settings.llm_base_url,
         temperature=0.2,
     )
-    _chain = _PROMPT | llm
+    _chain = _PROMPT | llm # |为管道运算符，表示将_PROMPT的结果作为llm的输入
     return _chain
 
 
