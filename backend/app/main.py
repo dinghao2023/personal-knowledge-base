@@ -90,9 +90,9 @@ async def upload(file: UploadFile = File(...)):
             status_code=400,
             detail=f"不支持的格式: .{ext or '未知'}，支持 {sorted(SUPPORTED_EXTS)}",
         )
-    saved = save_upload(file, os.path.basename(name))
+    saved = save_upload(file, os.path.basename(name)) # 保存上传文件到 docs 目录，返回落盘路径。
     try:
-        chunks = ingest_file(saved, os.path.basename(name))
+        chunks = ingest_file(saved, os.path.basename(name)) # 解析文档并写入向量库，返回分块数量。
     except RuntimeError as e:  # 未配置 embedding key 等
         raise HTTPException(status_code=500, detail=str(e))
     return {"filename": name, "chunks": chunks}
