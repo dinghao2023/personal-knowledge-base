@@ -40,6 +40,16 @@ export async function deleteDocument(filename: string): Promise<void> {
   await client.delete(`/documents/${encodeURIComponent(filename)}`)
 }
 
+/** 取出 FastAPI 返回的 detail，没有时退回通用错误信息。 */
+export function getApiErrorMessage(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    const detail = (err.response?.data as { detail?: unknown } | undefined)?.detail
+    if (typeof detail === 'string' && detail.trim()) return detail
+  }
+  if (err instanceof Error) return err.message
+  return String(err)
+}
+
 /** 上传文档入库，返回已分块数量（对接 FastAPI /api/upload） */
 export async function uploadDocument(file: File): Promise<{ chunks: number }> {
   const form = new FormData()

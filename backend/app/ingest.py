@@ -1,5 +1,6 @@
 """入库链路：LangChain 加载文档 → 分块 → 向量化 → 写入向量库。"""
 import os
+import tempfile
 from datetime import datetime
 from typing import Iterator, List
 
@@ -11,9 +12,25 @@ from .config import settings
 from .db import get_collection, get_vectorstore
 
 SUPPORTED_EXTS = {"pdf", "docx", "md", "txt"}
+_TEXT_ENCODINGS = ("utf-8", "gb18030")
 
 # 断点顺序与原先手写分块一致：先段落，再换行，再中英文句末
 _SEPARATORS = ["\n\n", "\n", "。", "！", "？", ".", "!", "；", " ", ""]
+
+
+class TextDecodeError(ValueError):
+    """txt/md 既不能按 UTF-8 读取，也不能按 GB18030 读取。"""
+
+
+def _read_text(path: str) -> str:
+    """先按 UTF-8 读，失败再试 GB18030。两种都失败时抛出 TextDecodeError。"""
+    for encoding in _TEXT_ENCODINGS:
+        try:
+            with open(path, encoding=encoding) as f:
+                return f.read()
+        except UnicodeDecodeError:
+            continue
+    raise TextDecodeError("无法读取文本：文件不是 UTF-8 或 GB18030 编码")
 
 
 class KnowledgeFileLoader(BaseLoader):
@@ -47,8 +64,7 @@ class KnowledgeFileLoader(BaseLoader):
             paras = [p.text for p in docx.Document(self.path).paragraphs if p.text]
             text = "\n".join(paras)
         elif ext in {"md", "txt"}:
-            with open(self.path, encoding="utf-8") as f:
-                text = f.read()
+            text = _read_text(self.path)
         else:
             raise ValueError(f"不支持的文件类型: .{ext}")
         if text.strip():
@@ -147,9 +163,30 @@ def delete_saved_file(filename: str) -> None:
 
 
 def save_upload(upload_file, filename: str) -> str:
-    """保存上传文件到 docs 目录，返回落盘路径。"""
+    """把上传内容写到 docs 目录里的隐藏临时文件，返回临时路径。
+
+    文件名以点开头，列表接口会跳过。入库成功后再改成正式文件名。
+    """
     os.makedirs(settings.docs_dir, exist_ok=True)
-    dest = os.path.join(settings.docs_dir, filename)
-    with open(dest, "wb") as f:
+    suffix = os.path.splitext(filename)[1]
+    fd, dest = tempfile.mkstemp(prefix=".", suffix=suffix, dir=settings.docs_dir)
+    with os.fdopen(fd, "wb") as f:
         f.write(upload_file.file.read())
     return dest
+
+
+def commit_upload(temp_path: str, filename: str) -> str:
+    """入库成功后，用临时文件替换 docs 目录中的正式文件。"""
+    name = os.path.basename(filename)
+    os.makedirs(settings.docs_dir, exist_ok=True)
+    dest = os.path.join(settings.docs_dir, name)
+    os.replace(temp_path, dest)
+    return dest
+
+
+def discard_upload(temp_path: str) -> None:
+    """入库失败时删除临时文件，不改动已经存在的正式文件。"""
+    try:
+        os.remove(temp_path)
+    except OSError:
+        pass

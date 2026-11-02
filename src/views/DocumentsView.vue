@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { deleteDocument, listDocuments, uploadDocument } from '@/api/client'
+import { deleteDocument, getApiErrorMessage, listDocuments, uploadDocument } from '@/api/client'
 
 interface DocItem {
   name: string
@@ -46,7 +46,7 @@ async function onDelete(name: string) {
     await deleteDocument(name)
     await loadDocuments()
   } catch (err) {
-    error.value = '删除失败：' + (err instanceof Error ? err.message : String(err))
+    error.value = '删除失败：' + getApiErrorMessage(err)
   } finally {
     deleting.value = ''
   }
@@ -63,7 +63,7 @@ async function onFileChange(e: Event) {
     await uploadDocument(file)
     await loadDocuments()
   } catch (err) {
-    error.value = '上传失败：' + (err instanceof Error ? err.message : String(err))
+    error.value = '上传失败：' + getApiErrorMessage(err)
   } finally {
     uploading.value = false
     target.value = ''
@@ -74,7 +74,7 @@ onMounted(async () => {
   try {
     await loadDocuments()
   } catch (err) {
-    error.value = '读取文档列表失败：' + (err instanceof Error ? err.message : String(err))
+    error.value = '读取文档列表失败：' + getApiErrorMessage(err)
   } finally {
     loading.value = false
   }
