@@ -2,8 +2,8 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
-import { sendChat, type HistoryItem } from '@/api/client'
-import { useChatStore, type Message } from '@/stores/chat'
+import { streamChat, type HistoryItem } from '@/api/client'
+import { useChatStore } from '@/stores/chat'
 
 const chat = useChatStore()
 const listEl = ref<HTMLElement | null>(null)
@@ -46,8 +46,8 @@ async function submit() {
   if (conv.messages.filter((m) => m.role === 'user').length === 1) {
     conv.title = text.length > 16 ? text.slice(0, 16) + '…' : text
   }
-  const loadingMsg: Message = { role: 'assistant', content: '', loading: true }
-  conv.messages.push(loadingMsg)
+  conv.messages.push({ role: 'assistant', content: '', loading: true })
+  const loadingMsg = conv.messages[conv.messages.length - 1]
   chat.pendingIds = [...chat.pendingIds, conv.id]
   scrollToBottom()
 
@@ -57,10 +57,23 @@ async function submit() {
     .map((m) => ({ role: m.role, content: m.content }))
 
   try {
-    const res = await sendChat(text, history)
-    loadingMsg.content = res.answer
-    loadingMsg.citations = res.citations
+    let streamError = ''
+    await streamChat(text, history, (event) => {
+      if (event.type === 'meta') {
+        loadingMsg.citations = event.citations
+      } else if (event.type === 'delta') {
+        loadingMsg.content += event.text
+        if (chat.activeId === conv.id) scrollToBottom()
+      } else if (event.type === 'error') {
+        streamError = event.message
+      }
+    })
     loadingMsg.loading = false
+    if (streamError) {
+      loadingMsg.content = loadingMsg.content
+        ? `${loadingMsg.content}\n\n（生成中断：${streamError}）`
+        : '请求失败：' + streamError
+    }
   } catch (e) {
     loadingMsg.loading = false
     loadingMsg.content = '请求失败：' + (e instanceof Error ? e.message : String(e))
@@ -99,7 +112,7 @@ async function submit() {
       >
         <div class="avatar">{{ m.role === 'user' ? '我' : 'K' }}</div>
         <div class="bubble">
-          <div v-if="m.loading" class="typing">思考中…</div>
+          <div v-if="m.loading && !m.content" class="typing">思考中…</div>
           <template v-else>
             <div
               v-if="m.role === 'assistant'"
@@ -107,7 +120,7 @@ async function submit() {
               v-html="renderMarkdown(m.content)"
             ></div>
             <div v-else class="content">{{ m.content }}</div>
-            <div v-if="m.citations && m.citations.length" class="citations">
+            <div v-if="!m.loading && m.citations && m.citations.length" class="citations">
               <div class="cit-title">引用来源</div>
               <div
                 v-for="(c, ci) in m.citations"

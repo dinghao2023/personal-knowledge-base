@@ -15,6 +15,15 @@ export default defineConfig({
             '/api': {
                 target: 'http://localhost:8000', // FastAPI 后端地址，按需修改
                 changeOrigin: true,
+                configure: function (proxy) {
+                    proxy.on('proxyRes', function (proxyRes) {
+                        var type = proxyRes.headers['content-type'];
+                        if (typeof type === 'string' && type.includes('text/event-stream')) {
+                            proxyRes.headers['cache-control'] = 'no-cache';
+                            proxyRes.headers['x-accel-buffering'] = 'no';
+                        }
+                    });
+                },
             },
         },
     },

@@ -7,11 +7,6 @@ export interface Citation {
   snippet: string
 }
 
-export interface ChatResponse {
-  answer: string
-  citations: Citation[]
-}
-
 export interface HistoryItem {
   role: 'user' | 'assistant'
   content: string
@@ -58,11 +53,56 @@ export async function uploadDocument(file: File): Promise<{ chunks: number }> {
   return data
 }
 
-/** 多轮问答，返回答案与引用（对接 FastAPI /api/chat） */
-export async function sendChat(
+export type ChatStreamEvent =
+  | { type: 'meta'; citations: Citation[] }
+  | { type: 'delta'; text: string }
+  | { type: 'done' }
+  | { type: 'error'; message: string }
+
+/** 多轮问答，以 SSE 流式返回答案与引用（对接 FastAPI /api/chat） */
+export async function streamChat(
   question: string,
   history: HistoryItem[],
-): Promise<ChatResponse> {
-  const { data } = await client.post('/chat', { question, history })
-  return data
+  onEvent: (event: ChatStreamEvent) => void,
+): Promise<void> {
+  const res = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify({ question, history }),
+  })
+  if (!res.ok) {
+    let detail = res.statusText || '请求失败'
+    try {
+      const data = (await res.json()) as { detail?: unknown }
+      if (typeof data.detail === 'string' && data.detail.trim()) detail = data.detail
+    } catch {
+      /* 非 JSON 错误体时沿用状态文本 */
+    }
+    throw new Error(detail)
+  }
+  if (!res.body) throw new Error('浏览器不支持流式响应')
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() ?? ''
+      for (const part of parts) {
+        const data = part
+          .split('\n')
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice(5).trim())
+          .join('\n')
+        if (!data) continue
+        onEvent(JSON.parse(data) as ChatStreamEvent)
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
 }
