@@ -1,4 +1,5 @@
 """FastAPI 入口：/api 前缀路由，对接前端。"""
+import json
 import os
 from pathlib import Path
 from typing import List, Literal
@@ -6,6 +7,7 @@ from typing import List, Literal
 from fastapi import APIRouter, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -117,18 +119,33 @@ async def upload(file: UploadFile = File(...)):
     return {"filename": name, "chunks": chunks}
 
 
+def _sse(event: dict) -> str:
+    return "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
+
+
 @api.post("/chat")
 def chat(payload: ChatRequest):
     question = payload.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="question 不能为空")
+    history = [{"role": h.role, "content": h.content} for h in payload.history]
     try:
-        return chat_service.ask(
-            question,
-            [{"role": h.role, "content": h.content} for h in payload.history],
-        )
+        prepared = chat_service.prepare_answer(question, history)
     except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    def generate():
+        try:
+            for event in chat_service.iter_events(prepared):
+                yield _sse(event)
+        except Exception as e:
+            yield _sse({"type": "error", "message": str(e)})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 app.include_router(api)

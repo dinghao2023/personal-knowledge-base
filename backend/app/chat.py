@@ -1,6 +1,6 @@
-"""问答：检索结果经 LangChain 提示词链交给 LLM，并带回引用。"""
+"""问答：检索结果经 LangChain 提示词链交给 LLM，并按 token 流式返回。"""
 import re
-from typing import Dict, List
+from typing import Dict, Iterator, List
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
@@ -57,7 +57,7 @@ def _build_llm():
         temperature=0.2,
     )
 
-
+# 问答的模型链
 def _get_chain():
     global _chain
     if _chain is not None:
@@ -65,7 +65,7 @@ def _get_chain():
     _chain = _PROMPT | _build_llm()  # | 为管道运算符，表示将 _PROMPT 的结果作为 llm 的输入
     return _chain
 
-
+# 自我介绍的模型链
 def _get_intro_chain():
     global _intro_chain
     if _intro_chain is not None:
@@ -100,28 +100,25 @@ def _message_text(message) -> str:
     return str(content or "")
 
 
-def ask(question: str, history: List[Dict[str, str]]) -> Dict:
+_EMPTY_ANSWER = "知识库中没有找到相关依据。请先上传相关文档，或换一种问法。"
+
+
+def prepare_answer(question: str, history: List[Dict[str, str]]) -> Dict:
+    """检索并建好模型链。配置错误在这里抛出，避免响应已经开始才失败。"""
     if _is_self_intro(question):
-        message = _get_intro_chain().invoke({"question": question})
-        return {"answer": _message_text(message), "citations": []}
+        _get_intro_chain()
+        return {"mode": "intro", "question": question}
 
     hits = search(question)
     if not hits:
-        return {
-            "answer": "知识库中没有找到相关依据。请先上传相关文档，或换一种问法。",
-            "citations": [],
-        }
+        return {"mode": "empty"}
 
+    _get_chain()
     context = "\n\n".join(f"[{i + 1}] {h.chunk}" for i, h in enumerate(hits))
-    # 只保留最近若干轮历史，避免上下文超限
     history_msgs = [
         {"role": msg["role"], "content": msg["content"]}
         for msg in history[-settings.history_turns * 2 :]
     ]
-    message = _get_chain().invoke(
-        {"history": history_msgs, "context": context, "question": question}
-    )
-
     citations = [
         {
             "source": h.source,
@@ -130,4 +127,42 @@ def ask(question: str, history: List[Dict[str, str]]) -> Dict:
         }
         for h in hits
     ]
-    return {"answer": _message_text(message), "citations": citations}
+    return {
+        "mode": "rag",
+        "question": question,
+        "context": context,
+        "history": history_msgs,
+        "citations": citations,
+    }
+
+
+def _stream_chain(chain, payload: Dict) -> Iterator[Dict]:
+    for chunk in chain.stream(payload):
+        text = _message_text(chunk)
+        if text:
+            yield {"type": "delta", "text": text}
+    yield {"type": "done"}
+
+
+def iter_events(prepared: Dict) -> Iterator[Dict]:
+    """产出 SSE 事件：meta（引用）、delta（增量文本）、done。"""
+    mode = prepared["mode"]
+    if mode == "empty":
+        yield {"type": "meta", "citations": []}
+        yield {"type": "delta", "text": _EMPTY_ANSWER}
+        yield {"type": "done"}
+        return
+    if mode == "intro":
+        yield {"type": "meta", "citations": []}
+        yield from _stream_chain(_get_intro_chain(), {"question": prepared["question"]})
+        return
+
+    yield {"type": "meta", "citations": prepared["citations"]}
+    yield from _stream_chain(
+        _get_chain(),
+        {
+            "history": prepared["history"],
+            "context": prepared["context"],
+            "question": prepared["question"],
+        },
+    )
