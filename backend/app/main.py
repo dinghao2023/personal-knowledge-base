@@ -118,7 +118,7 @@ async def upload(file: UploadFile = File(...)):
             discard_upload(temp_path)
     return {"filename": name, "chunks": chunks}
 
-
+# 把事件字典格式化为SSE（Server-Sent Events）文本，供 POST /api/chat 逐段写进响应
 def _sse(event: dict) -> str:
     return "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
 
@@ -134,6 +134,7 @@ def chat(payload: ChatRequest):
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
+    # 生成器函数
     def generate():
         try:
             for event in chat_service.iter_events(prepared):
@@ -143,7 +144,7 @@ def chat(payload: ChatRequest):
 
     return StreamingResponse(
         generate(),
-        media_type="text/event-stream",
+        media_type="text/event-stream",# 变成响应头 Content-Type: text/event-stream，告诉客户端这是 SSE，要按 data: 分段读取
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
