@@ -100,9 +100,6 @@ def _message_text(message) -> str:
     return str(content or "")
 
 
-_EMPTY_ANSWER = "知识库中没有找到相关依据。请先上传相关文档，或换一种问法。"
-
-
 def prepare_answer(question: str, history: List[Dict[str, str]]) -> Dict:
     """检索并建好模型链。配置错误在这里抛出，避免响应已经开始才失败。"""
     if _is_self_intro(question):
@@ -149,7 +146,7 @@ def iter_events(prepared: Dict) -> Iterator[Dict]:
     mode = prepared["mode"]
     if mode == "empty":
         yield {"type": "meta", "citations": []}
-        yield {"type": "delta", "text": _EMPTY_ANSWER}
+        yield {"type": "delta", "text": "知识库中没有找到相关依据。请先上传相关文档，或换一种问法。"}
         yield {"type": "done"}
         return
     if mode == "intro":
