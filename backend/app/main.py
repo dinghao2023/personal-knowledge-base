@@ -134,7 +134,7 @@ def chat(payload: ChatRequest):
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    # 生成器函数
+    # 生成器函数，返回生成器对象
     def generate():
         try:
             for event in chat_service.iter_events(prepared):
